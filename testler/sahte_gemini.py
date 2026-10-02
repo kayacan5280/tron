@@ -40,6 +40,7 @@ class Senaryo(object):
         self.dakika_hatasi = {}            # anahtar -> kaç kez 429 dakikalık verilsin
         self.sunucu_hatasi = 0
         self.engelli_kelimeler = []
+        self.reddeden_modeller = set()     # bu modeller her isteği "invalid argument" ile reddeder
         self.engelli_sadece_model = None   # verilirse engel sadece bu modelde uygulanır
         self.bozuk_json = 0
         self.eksik_id = 0
@@ -100,6 +101,8 @@ class _Isleyici(http.server.BaseHTTPRequestHandler):
         if model not in s.modeller:
             return self._hata(404, "NOT_FOUND", "models/%s is not found for API version v1beta" % model)
 
+        if model in s.reddeden_modeller:
+            return self._hata(400, "INVALID_ARGUMENT", "Request contains an invalid argument.")
         govde = json.loads(ham.decode("utf-8"))
         gen = govde.get("generationConfig", {})
         desteklenmeyen = s.desteklenmeyen.get(model, set())

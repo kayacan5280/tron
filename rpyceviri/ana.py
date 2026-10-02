@@ -569,6 +569,8 @@ def oyunu_cevir(ayar, oyun_yolu=None, otomatik=False):
         if cev.kritik_hata is not None:
             if isinstance(cev.kritik_hata, cevirmen_mod.BaglantiKesildi):
                 ui.hata("%s. Çeviri durduruldu; yapılanlar kaydedildi." % cev.kritik_hata)
+                if cev.son_hata:
+                    ui.yaz("   Son hata: " + cev.son_hata[:300])
                 ui.yaz("   İnternet bağlantınızı kontrol edip programı tekrar çalıştırın; kaldığı yerden devam eder.")
             elif isinstance(cev.kritik_hata, gemini.ApiHatasi) and cev.kritik_hata.tur == gemini.SSL:
                 ui.hata("Güvenli bağlantı kurulamadı (SSL). Bilgisayarınızın saatini kontrol edin, "

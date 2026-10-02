@@ -281,6 +281,11 @@ class AnahtarYoneticisi(object):
 
                 self.kosul.wait(timeout=min(bekleme, 1.0))
 
+    def model_basarisi(self, model):
+        """Bu modelle bu oturumda kaç istek başarıyla tamamlandı."""
+        with self.kosul:
+            return sum(d.basarili for (_i, m), d in self.ikililer.items() if m == model)
+
     def basarili(self, i, model):
         with self.kosul:
             d = self._ikili(i, model)

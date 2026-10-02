@@ -91,6 +91,8 @@ class Cevirmen(object):
         self.son_model = ""
         self._ardisik_ag = 0
         self._ardisik_sunucu = 0
+        self._model_reddi = collections.Counter()
+        self.son_hata = ""
 
     # ------------------------------------------------------------------
     # Yardımcılar
@@ -201,8 +203,20 @@ class Cevirmen(object):
                     if ozellik and self.yonetici.ozellik_kapat(model, ozellik):
                         self._gunluk("Model %s '%s' özelliğini desteklemiyor, kapatıldı: %s" % (model, ozellik, h.mesaj[:200]))
                         continue
+                if h.tur == gemini.GECERSIZ_ISTEK:
+                    # Hiç başarılı isteği olmayan bir model isteklerimizi sürekli reddediyorsa
+                    # (ör. yeni/deneysel model) o modeli bırakıp diğerlerine geç; satırlar
+                    # "çevrilemedi" sayılmasın.
+                    with self._kilit:
+                        self._model_reddi[model] += 1
+                        reddedildi = self._model_reddi[model]
+                    if reddedildi >= 3 and self.yonetici.model_basarisi(model) == 0:
+                        self._gunluk("Model %s isteklerimizi sürekli reddediyor, devre dışı bırakıldı: %s" % (model, h.mesaj[:300]))
+                        h = gemini.ApiHatasi(gemini.MODEL_YOK, "Model istekleri reddediyor: " + h.mesaj[:150], h.http)
+                        h.model = model
+                self.son_hata = "[%s] %s" % (model, h)
                 self.yonetici.hata(i, model, h)
-                self._gunluk("API hatası [%s, anahtar #%d]: %s" % (model, i + 1, h))
+                self._gunluk("API hatası [%s, anahtar #%d]: %s | %s" % (model, i + 1, h, (h.ham or "")[:200]))
                 self.istatistik["api_hata_" + h.tur] += 1
                 with self._kilit:
                     if h.tur in (gemini.AG, gemini.ZAMAN_ASIMI):

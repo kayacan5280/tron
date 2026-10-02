@@ -253,6 +253,15 @@ class CevirmenTestleri(unittest.TestCase):
         for m in metinler:
             self.assertIsNone(p.durum_al(m), m)
 
+    def test_istekleri_reddeden_model_birakilir(self):
+        self.sunucu.senaryo.reddeden_modeller.add("gemini-2.5-flash")
+        metinler = ["Line number %d is right here." % i for i in range(12)]
+        p, c, y = self._calistir(metinler)
+        for m in metinler:
+            self.assertEqual(p.ceviri_al(m), sahte_cevir(m), m)
+        self.assertEqual(c.istatistik["basarisiz"], 0)
+        self.assertIn("gemini-2.5-flash", y.model_kapali)
+
     def test_desteklenmeyen_ozellik_kapatilir(self):
         s = self.sunucu.senaryo
         s.desteklenmeyen["gemini-2.5-flash"] = {"dusunme", "sema"}
