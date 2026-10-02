@@ -32,3 +32,16 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Ren'Py Turkce Ceviri Motoru - kisisel/calisma dosyalari (depoya girmez)
+api_anahtarlari.txt
+api_anahtarlari.txt.tmp
+anahtar_durumu.json
+anahtar_durumu.json.tmp
+ayarlar.json
+ayarlar.json.tmp
+ayarlar.json.bozuk
+hata_raporu.txt
+projeler/
+__pycache__/
+*.pyc
