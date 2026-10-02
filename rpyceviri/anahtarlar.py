@@ -1,4 +1,4 @@
-"""Birden fazla Gemini API anahtarının yönetimi.
+"""Birden fazla API anahtarının (Gemini, Claude, DeepSeek...) yönetimi.
 
 - Anahtarlar sırayla/dengeli kullanılır (her biri ayrı Google hesabı/projesi ise
   kotaları ayrıdır).
@@ -8,6 +8,10 @@
   yeniden açılsa da hatırlanır.
 - Geçersiz anahtar devre dışı bırakılır.
 - En kaliteli modelin bütün anahtarlarda kotası bitince sıradaki modele geçilir.
+- Bakiyesi biten ücretli anahtar bu oturumda bir daha kullanılmaz.
+
+Model yerine "hedef" kullanılır: "sağlayıcı/model" (ör. gemini/gemini-2.5-flash).
+Bir anahtar sadece kendi sağlayıcısının hedeflerinde kullanılır.
 """
 
 import hashlib
@@ -18,6 +22,7 @@ import threading
 import time
 
 from . import gemini
+from . import saglayicilar
 from . import zaman
 
 
@@ -45,10 +50,15 @@ def anahtar_etiketi(anahtar):
 
 
 def anahtarlari_oku(dosya):
-    """api_anahtarlari.txt dosyasından anahtarları okur (yorum satırları ve tekrarlar atlanır)."""
+    """api_anahtarlari.txt dosyasından (sağlayıcı, anahtar) ikililerini okur.
+
+    Yorum satırları ve tekrarlar atlanır. Satırlar "claude: sk-ant-..." gibi
+    sağlayıcı önekli ya da öneksiz (Gemini) olabilir.
+    """
     anahtarlar = []
     if not os.path.exists(dosya):
         return anahtarlar
+    gorulen = set()
     with open(dosya, "r", encoding="utf-8-sig") as f:
         for satir in f:
             s = satir.strip()
@@ -56,26 +66,34 @@ def anahtarlari_oku(dosya):
                 continue
             # "anahtar  # açıklama" biçimine izin ver
             s = s.split("#", 1)[0].strip().strip('"').strip("'").strip()
-            if s and s not in anahtarlar:
-                anahtarlar.append(s)
+            if not s:
+                continue
+            sag, a = saglayicilar.anahtar_coz(s)
+            a = a.strip('"').strip("'")
+            if a and a not in gorulen:
+                gorulen.add(a)
+                anahtarlar.append((sag, a))
     return anahtarlar
 
 
 def anahtarlari_yaz(dosya, anahtarlar):
+    """anahtarlar: (sağlayıcı, anahtar) ikilileri ya da düz (Gemini) anahtarlar."""
     gecici = dosya + ".tmp"
     with open(gecici, "w", encoding="utf-8") as f:
-        f.write("# Gemini API anahtarları - her satıra bir anahtar.\n")
-        f.write("# Anahtar almak için: https://aistudio.google.com/apikey\n")
-        f.write("# Her anahtarı FARKLI bir Google hesabından alın; aynı hesabın anahtarları kotayı paylaşır.\n")
+        f.write("# API anahtarları - her satıra bir anahtar.\n")
+        f.write("# Öneksiz satırlar Google Gemini anahtarıdır (ücretsiz): https://aistudio.google.com/apikey\n")
+        f.write("# Her Gemini anahtarını FARKLI bir Google hesabından alın; aynı hesabın anahtarları kotayı paylaşır.\n")
+        f.write("# Ücretli servisler önekle yazılır:  claude: sk-ant-...   deepseek: sk-...   openai: sk-...   openrouter: sk-or-...\n")
         f.write("# Bu dosyayı kimseyle paylaşmayın.\n")
         for a in anahtarlar:
-            f.write(a + "\n")
+            sag, deger = a if isinstance(a, tuple) else ("gemini", a)
+            f.write(saglayicilar.anahtar_satiri(sag, deger) + "\n")
     os.replace(gecici, dosya)
 
 
 def anahtar_bicimi_uygun_mu(anahtar):
     a = anahtar.strip()
-    if len(a) < 20 or len(a) > 200:
+    if len(a) < 20 or len(a) > 300:
         return False
     if any(c.isspace() for c in a):
         return False
@@ -99,18 +117,24 @@ class _Ikili(object):
 class AnahtarYoneticisi(object):
 
     def __init__(self, anahtarlar, modeller, aralik_fonk, durum_dosyasi=None, saat=None, utc_saat=None):
-        self.anahtarlar = list(anahtarlar)
+        # anahtarlar: (sağlayıcı, anahtar) ikilileri; düz metin verilirse Gemini sayılır.
+        # modeller: "sağlayıcı/model" hedefleri; öneksiz model adı Gemini sayılır.
+        ikililer = [a if isinstance(a, tuple) else ("gemini", a) for a in anahtarlar]
+        self.saglayicilar = [s for s, _a in ikililer]
+        self.anahtarlar = [a for _s, a in ikililer]
         self.kimlikler = [anahtar_kimligi(a) for a in self.anahtarlar]
         self.modeller = list(modeller)
-        self.aralik_fonk = aralik_fonk          # model -> iki istek arası en az saniye
+        self._hedef_sag = {m: saglayicilar.hedef_coz(m)[0] for m in self.modeller}
+        self.aralik_fonk = aralik_fonk          # hedef -> iki istek arası en az saniye
         self.durum_dosyasi = durum_dosyasi
         self._saat = saat or time.monotonic
         self._utc = utc_saat or zaman.simdi_utc
         self.kosul = threading.Condition(threading.RLock())
-        self.gecersiz = {}                       # anahtar indeksi -> neden
-        self.model_kapali = {}                   # model -> neden
-        self.ozellikler = {}                     # model -> {ozellik: bool}
-        self.ikililer = {}                       # (indeks, model) -> _Ikili
+        self.gecersiz = {}                       # anahtar indeksi -> neden (diske yazılır)
+        self.oturum_kapali = {}                  # anahtar indeksi -> neden (bu oturumluk: bakiye bitti vb.)
+        self.model_kapali = {}                   # hedef -> neden
+        self.ozellikler = {}                     # hedef -> {ozellik: bool}
+        self.ikililer = {}                       # (indeks, hedef) -> _Ikili
         self.son_model = None
         self.toplam_istek = 0
         self._durumu_yukle()
@@ -146,6 +170,11 @@ class AnahtarYoneticisi(object):
             for model, md in (k.get("modeller") or {}).items():
                 if not isinstance(md, dict):
                     continue
+                # Eski sürümler model adını öneksiz (Gemini) kaydederdi.
+                if model not in self._hedef_sag:
+                    alt = saglayicilar.hedef_normallestir(model)
+                    if alt in self._hedef_sag:
+                        model = alt
                 bitis = zaman.iso_coz(md.get("gunluk_bitis", ""))
                 if bitis and bitis > simdi:
                     d = self._ikili(i, model)
@@ -183,6 +212,7 @@ class AnahtarYoneticisi(object):
         """Kayıtlı 'günlük kota bitti' ve 'geçersiz' işaretlerini temizler."""
         with self.kosul:
             self.gecersiz.clear()
+            self.oturum_kapali.clear()
             self.ikililer.clear()
             self.model_kapali.clear()
             self._durumu_kaydet()
@@ -210,10 +240,20 @@ class AnahtarYoneticisi(object):
 
     def kullanilabilir_anahtar_sayisi(self):
         with self.kosul:
-            return len([i for i in range(len(self.anahtarlar)) if i not in self.gecersiz])
+            sag = set(self._hedef_sag.get(m) for m in self.modeller if m not in self.model_kapali)
+            return len([i for i in range(len(self.anahtarlar))
+                        if i not in self.gecersiz and i not in self.oturum_kapali and self.saglayicilar[i] in sag])
+
+    def hedef_kapat(self, hedef, neden):
+        """Bir hedefi bu oturum için kapatır (bütçe doldu, paket kurulu değil vb.)."""
+        with self.kosul:
+            self.model_kapali[hedef] = neden
+            self.kosul.notify_all()
 
     def _uygun_mu(self, i, model, simdi_utc):
-        if i in self.gecersiz:
+        if i in self.gecersiz or i in self.oturum_kapali:
+            return False
+        if self.saglayicilar[i] != self._hedef_sag.get(model, "gemini"):
             return False
         d = self.ikililer.get((i, model))
         if d is not None and d.gunluk_bitis is not None and d.gunluk_bitis > simdi_utc:
@@ -303,6 +343,15 @@ class AnahtarYoneticisi(object):
                 self.gecersiz[i] = h.mesaj
                 self._durumu_kaydet()
 
+            elif tur == gemini.KREDI:
+                self.oturum_kapali[i] = h.mesaj
+
+            elif tur == gemini.SDK_YOK:
+                sag = self._hedef_sag.get(model)
+                for m in self.modeller:
+                    if self._hedef_sag.get(m) == sag:
+                        self.model_kapali[m] = h.mesaj
+
             elif tur == gemini.KOTA_GUNLUK:
                 d.gunluk_bitis = zaman.sonraki_kota_sifirlama(self._utc())
                 d.gunluk_kalici = True
@@ -339,7 +388,7 @@ class AnahtarYoneticisi(object):
         simdi_utc = self._utc()
         en = None
         for (i, model), d in self.ikililer.items():
-            if i in self.gecersiz or model in self.model_kapali:
+            if i in self.gecersiz or i in self.oturum_kapali or model in self.model_kapali:
                 continue
             if d.gunluk_bitis and d.gunluk_bitis > simdi_utc:
                 if en is None or d.gunluk_bitis < en:
@@ -348,10 +397,11 @@ class AnahtarYoneticisi(object):
 
     def durum_nedenleri(self):
         nedenler = []
-        for i, n in sorted(self.gecersiz.items()):
-            nedenler.append("Anahtar %s: %s" % (anahtar_etiketi(self.anahtarlar[i]), n))
+        for i, n in sorted(list(self.gecersiz.items()) + list(self.oturum_kapali.items())):
+            nedenler.append("Anahtar %s (%s): %s" % (anahtar_etiketi(self.anahtarlar[i]),
+                                                     saglayicilar.saglayici_adi(self.saglayicilar[i]), n))
         for m, n in self.model_kapali.items():
-            nedenler.append("Model %s: %s" % (m, n))
+            nedenler.append("Model %s: %s" % (saglayicilar.model_adi(m), n))
         return nedenler
 
     def ozet(self):
@@ -360,16 +410,16 @@ class AnahtarYoneticisi(object):
         simdi_utc = self._utc()
         with self.kosul:
             for i, a in enumerate(self.anahtarlar):
+                etiket = "%-17s %s" % (saglayicilar.saglayici_adi(self.saglayicilar[i]), anahtar_etiketi(a))
                 if i in self.gecersiz:
-                    satirlar.append("%s  GEÇERSİZ (%s)" % (anahtar_etiketi(a), self.gecersiz[i][:80]))
+                    satirlar.append("%s  GEÇERSİZ (%s)" % (etiket, self.gecersiz[i][:80]))
                     continue
                 biten = []
-                for model in self.modeller:
-                    d = self.ikililer.get((i, model))
-                    if d and d.gunluk_bitis and d.gunluk_bitis > simdi_utc:
-                        biten.append(model)
+                for (j, model), d in self.ikililer.items():
+                    if j == i and d.gunluk_bitis and d.gunluk_bitis > simdi_utc:
+                        biten.append(saglayicilar.model_adi(model))
                 if biten:
-                    satirlar.append("%s  kotası biten modeller: %s" % (anahtar_etiketi(a), ", ".join(biten)))
+                    satirlar.append("%s  kotası biten modeller: %s" % (etiket, ", ".join(sorted(biten))))
                 else:
-                    satirlar.append("%s  hazır" % anahtar_etiketi(a))
+                    satirlar.append("%s  hazır" % etiket)
         return satirlar

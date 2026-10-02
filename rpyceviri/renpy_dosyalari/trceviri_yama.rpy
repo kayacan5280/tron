@@ -69,6 +69,37 @@ init 999 python in trceviri:
             return True
 
     # ------------------------------------------------------------------
+    # Turkce ek uyumu: "[name]{ek=in} odasi" -> oyuncunun adina gore
+    # "Ali'nin odasi", "Elif'in odasi", "Mike'in odasi". Asagidaki kod motorun
+    # ekler.py dosyasindan kurulum sirasinda otomatik eklenir.
+    # ------------------------------------------------------------------
+
+    # @@EKLER@@
+
+    def _deger_bul(token):
+        try:
+            return renpy.substitute(token, translate=False)
+        except TypeError:
+            return renpy.substitute(token)
+
+    def _ekleri_coz(t):
+        if u"{ek=" not in t:
+            return t
+        try:
+            return isaretleri_coz(t, _deger_bul)
+        except Exception:
+            pass
+        try:
+            return isaretleri_sabitle(t)
+        except Exception:
+            pass
+        try:
+            import re as _re
+            return _re.sub(u"\\{ek=[^{}]*\\}", u"", t)
+        except Exception:
+            return t
+
+    # ------------------------------------------------------------------
     # Diyalog ve secenekler (say / menu)
     # ------------------------------------------------------------------
 
@@ -87,6 +118,7 @@ init 999 python in trceviri:
             if _etkin():
                 t = _diyalog_bul(s)
                 if t is not None:
+                    t = _ekleri_coz(t)
                     if _eski_filtre is not None:
                         return _eski_filtre(t)
                     return t
@@ -94,7 +126,7 @@ init 999 python in trceviri:
                     s2 = _eski_filtre(s)
                     t2 = _diyalog_bul(s2)
                     if t2 is not None:
-                        return t2
+                        return _ekleri_coz(t2)
                     return s2
         except Exception:
             pass
@@ -254,6 +286,13 @@ init 999 python in trceviri:
         for fn in (veri.get("eksik_fontlar") or []):
             if _metin_mi(fn) and fn:
                 _durum.eksik_fontlar.add(fn.replace("\\", "/").split("/")[-1].lower())
+
+        try:
+            for k, v in (veri.get("ek_istisnalari") or {}).items():
+                if _metin_mi(k) and _metin_mi(v) and k and v:
+                    OZEL_OKUNUS[k] = v
+        except Exception:
+            pass
 
         if _metin_mi(veri.get("yedek_font")) and veri.get("yedek_font"):
             _durum.yedek = veri["yedek_font"]

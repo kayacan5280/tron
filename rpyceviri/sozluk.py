@@ -78,6 +78,15 @@ class Sozluk(object):
             pass
         return s
 
+    def tum_satirlar(self, en_fazla=150):
+        """Bütün girdiler 'Kaynak → Türkçe (cinsiyet)' satırları olarak (en fazla en_fazla)."""
+        satirlar = []
+        for kaynak, (turkce, cinsiyet) in self.girdiler.items():
+            if len(satirlar) >= en_fazla:
+                break
+            satirlar.append("%s → %s%s" % (kaynak, turkce, (" (%s)" % cinsiyet) if cinsiyet else ""))
+        return satirlar
+
     def ilgili_satirlar(self, metinler, en_fazla=80):
         """Verilen metinlerde geçen sözlük girdilerini 'Kaynak → Türkçe' satırları olarak döndürür."""
         birlesik = "\n".join(metinler)

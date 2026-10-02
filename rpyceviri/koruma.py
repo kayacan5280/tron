@@ -13,6 +13,8 @@ her durumu tespit eder ve güvenle düzeltilebilecek olanları düzeltir.
 import collections
 import re
 
+from . import ekler
+
 _TOKEN_RE = re.compile(
     r"\{\{"                      # {{  (kaçış)
     r"|\{[^{}]*\}"               # {etiket}
@@ -29,7 +31,7 @@ _LATIN_KELIME_RE = re.compile(r"[A-Za-z]{3,}")
 # Kapanışı olmayan (tek başına kullanılan) Ren'Py metin etiketleri.
 _TEKIL_ETIKETLER = {
     "w", "p", "nw", "fast", "done", "clear", "vspace", "space", "image", "#",
-    "alt", "noalt", "shader", "art", "lb",
+    "alt", "noalt", "shader", "art", "lb", "ek",
 }
 
 _TIRNAK_CIFTLERI = [('"', '"'), ("“", "”"), ("„", "“"), ("«", "»"), ("'", "'"), ("‘", "’"), ("「", "」"), ("『", "』")]
@@ -123,6 +125,70 @@ def _serbest_ozel_karakterleri_kacir(metin):
     return "".join(sonuc)
 
 
+def _disarida_uygula(metin, fonk):
+    """fonk'u sadece korunan parçaların DIŞINDAKİ metne uygular."""
+    sonuc = []
+    konum = 0
+    for m in _TOKEN_RE.finditer(metin):
+        sonuc.append(fonk(metin[konum:m.start()]))
+        sonuc.append(m.group(0))
+        konum = m.end()
+    sonuc.append(fonk(metin[konum:]))
+    return "".join(sonuc)
+
+
+def turkce_buyuk(s):
+    """Türkçe kurallarıyla büyük harf: i -> İ, ı -> I (Python'un upper() i'yi I yapar)."""
+    return s.replace("i", "İ").replace("ı", "I").upper()
+
+
+def turkce_kucuk(s):
+    return s.replace("I", "ı").replace("İ", "i").lower()
+
+
+def tamami_buyuk_mu(metin):
+    harfler = _HARF_RE.findall(duz_metin(metin))
+    return len(harfler) >= 3 and all(not h.islower() for h in harfler)
+
+
+_OZEL_KARAKTERLER = (
+    ("…", "..."), ("“", '"'), ("”", '"'), ("„", '"'), ("«", '"'), ("»", '"'),
+    ("‘", "'"), ("’", "'"), ("\u00a0", " "),
+)
+
+
+def _karakterleri_normallestir(kaynak, ceviri):
+    """Kaynakta olmayan … “ ” ‘ ’ gibi karakterleri düz karşılıklarına çevirir.
+
+    Oyunun fontunda bu karakterler olmayabilir ve kutu (□) olarak görünür.
+    """
+    for ozel, duz in _OZEL_KARAKTERLER:
+        if ozel in ceviri and ozel not in kaynak:
+            ceviri = ceviri.replace(ozel, duz)
+    return ceviri
+
+
+def _ek_normallestir(metin):
+    """Geçerli ek işaretlerini standart biçime getirir: [ad]'{ek=in} -> [ad]{ek=in}, soru eki: [ad] {ek=mi}."""
+    def degistir(m):
+        token, _kesme, _bosluk, varyant = m.groups()
+        if not ekler.gecerli_varyant(varyant):
+            return m.group(0)
+        if ekler.EK_TURLERI.get("mi") and varyant in ekler.EK_TURLERI["mi"]:
+            return token + " {ek=" + varyant + "}"
+        return token + "{ek=" + varyant + "}"
+    return ekler.ISARET_RE.sub(degistir, metin)
+
+
+def _ek_isaretsiz(metin):
+    """Karşılaştırma için geçerli ek işaretlerini çıkarır (değişken parçası kalır)."""
+    def degistir(m):
+        if ekler.gecerli_varyant(m.group(4)):
+            return m.group(1)
+        return m.group(0)
+    return ekler.ISARET_RE.sub(degistir, metin)
+
+
 def _bosluklari_esle(kaynak, ceviri):
     bas = re.match(r"^\s*", kaynak).group(0)
     son = re.search(r"\s*$", kaynak).group(0)
@@ -171,9 +237,22 @@ def dogrula(kaynak, ceviri):
 
     # Kaynakta olmayan tek '[' / '{' karakterlerini kaçışla.
     c = _serbest_ozel_karakterleri_kacir(c)
+    c = _karakterleri_normallestir(kaynak, c)
+
+    # Bağıran (tamamı büyük harf) satırlar Türkçe kurallarla büyük harf olsun.
+    if tamami_buyuk_mu(kaynak) and not tamami_buyuk_mu(c):
+        c = _disarida_uygula(c, turkce_buyuk)
+
+    # Ek işaretleri ([ad]{ek=in}) sadece değişkenden hemen sonra ve geçerli ekle olabilir.
+    c = _ek_normallestir(c)
+    for v in ekler.HAM_ISARET_RE.findall(c):
+        if not ekler.gecerli_varyant(v):
+            ciddi.append("geçersiz ek işareti {ek=%s}" % v)
+    if "{ek=" in _ek_isaretsiz(c) and not any("geçersiz ek" in x for x in ciddi):
+        ciddi.append("ek işareti sadece [değişken] parçasından hemen sonra kullanılabilir")
 
     ks = _sayac(kaynak)
-    cs = _sayac(c)
+    cs = _sayac(_ek_isaretsiz(c))
 
     if ks != cs:
         eksik = ks - cs
@@ -233,11 +312,20 @@ def maske_kaldir(maskeli, harita):
     if gorulen != beklenen:
         return None
     # Maske dışında kalan özel karakterleri önce kaçışla, sonra belirteçleri koy.
+    # Belirteçten hemen sonra gelen geçerli ek işareti ({ek=in}) korunur.
     parcalar_ = _MASKE_RE.split(maskeli)
     sonuc = []
     for i, p in enumerate(parcalar_):
         if i % 2 == 0:
-            sonuc.append(p.replace("[", "[[").replace("{", "{{"))
+            on = ""
+            if i > 0:
+                m = _MASKE_EK_RE.match(p)
+                if m and ekler.gecerli_varyant(m.group(3)):
+                    on, p = m.group(0), p[m.end():]
+            sonuc.append(on + p.replace("[", "[[").replace("{", "{{"))
         else:
             sonuc.append(harita[int(p)])
     return "".join(sonuc)
+
+
+_MASKE_EK_RE = re.compile(r"^('?)( ?)\{ek=([a-zçğıöşü]+)\}")

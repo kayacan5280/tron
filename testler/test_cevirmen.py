@@ -115,7 +115,7 @@ class AnahtarYoneticisiTestleri(unittest.TestCase):
         anahtarlar.anahtarlari_yaz(yol, [ANAHTAR_A, ANAHTAR_B])
         with open(yol, "a", encoding="utf-8") as f:
             f.write("\n  %s   # arkadaşımın\n%s\n" % (ANAHTAR_C, ANAHTAR_A))
-        self.assertEqual(anahtarlar.anahtarlari_oku(yol), [ANAHTAR_A, ANAHTAR_B, ANAHTAR_C])
+        self.assertEqual(anahtarlar.anahtarlari_oku(yol), [("gemini", ANAHTAR_A), ("gemini", ANAHTAR_B), ("gemini", ANAHTAR_C)])
         self.assertFalse(anahtarlar.anahtar_bicimi_uygun_mu("kısa"))
         self.assertTrue(anahtarlar.anahtar_bicimi_uygun_mu(ANAHTAR_A))
 
@@ -244,6 +244,7 @@ class CevirmenTestleri(unittest.TestCase):
         eski_random = anahtarlar.random
         anahtarlar.random = types.SimpleNamespace(uniform=lambda a, b: 0.01)
         gemini.API_TABANI = "http://127.0.0.1:9/v1beta"   # kapalı port: bağlantı reddedilir
+        self.ayar["internet_bekleme_dk"] = 0.03            # ~2 sn bekleyip dursun
         try:
             metinler = ["Line %d is here." % i for i in range(12)]
             p, c, _y = self._calistir(metinler)

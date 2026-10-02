@@ -149,8 +149,9 @@ def secim(soru, secenekler, varsayilan=None):
     gecerli = [a for a, _ in secenekler]
     while True:
         cevap = sor(soru, varsayilan)
-        if cevap in gecerli:
-            return cevap
+        for a in gecerli:
+            if cevap.lower() == a.lower():
+                return a
         uyari("Geçersiz seçim. Şunlardan birini yazın: " + ", ".join(gecerli))
 
 

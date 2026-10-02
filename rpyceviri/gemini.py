@@ -30,6 +30,8 @@ ENGELLENDI = "engellendi"               # güvenlik filtresi -> paketi böl / sa
 BOS_YANIT = "bos_yanit"                 # boş yanıt -> tekrar dene
 KESILDI = "kesildi"                     # çıktı token sınırı -> paketi böl
 BOLGE = "bolge"                         # bölge desteklenmiyor
+KREDI = "kredi"                         # ücretli hesabın kredisi/bakiyesi bitti -> bu anahtarı bu oturumda bırak
+SDK_YOK = "sdk_yok"                     # sağlayıcının gerekli Python paketi kurulu değil
 
 
 class ApiHatasi(Exception):
@@ -179,8 +181,9 @@ def yanit_coz(veri):
     return metin, veri.get("usageMetadata") or {}
 
 
-def _istek(url, anahtar, veri=None, zaman_asimi=120):
-    basliklar = {"x-goog-api-key": anahtar}
+def http_istek(url, basliklar, veri=None, zaman_asimi=120, hata_cozucu=None):
+    """Bir HTTP isteği yapar; hataları ApiHatasi'na çevirir. Döndürür: yanıt gövdesi (bytes)."""
+    basliklar = dict(basliklar)
     if veri is not None:
         basliklar["Content-Type"] = "application/json; charset=utf-8"
     istek = urllib.request.Request(url, data=veri, headers=basliklar, method="POST" if veri is not None else "GET")
@@ -192,7 +195,7 @@ def _istek(url, anahtar, veri=None, zaman_asimi=120):
             govde = e.read()
         except Exception:
             govde = b""
-        raise hata_coz(e.code, govde, e.headers)
+        raise (hata_cozucu or hata_coz)(e.code, govde, e.headers)
     except (socket.timeout, TimeoutError):
         raise ApiHatasi(ZAMAN_ASIMI, "Sunucu zamanında yanıt vermedi")
     except urllib.error.URLError as e:
@@ -206,6 +209,10 @@ def _istek(url, anahtar, veri=None, zaman_asimi=120):
         raise ApiHatasi(SSL, "Güvenli bağlantı (SSL) hatası: %s" % e)
     except Exception as e:  # ConnectionResetError, IncompleteRead, RemoteDisconnected...
         raise ApiHatasi(AG, "Bağlantı koptu: %s" % e.__class__.__name__)
+
+
+def _istek(url, anahtar, veri=None, zaman_asimi=120):
+    return http_istek(url, {"x-goog-api-key": anahtar}, veri, zaman_asimi)
 
 
 def icerik_uret(anahtar, model, govde, zaman_asimi=120):

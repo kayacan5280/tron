@@ -21,6 +21,10 @@ TAMAM = "tamam"        # yapay zeka çevirdi, doğrulandı
 HAZIR = "hazir"        # yerleşik Türkçe arayüz tablosundan
 SOZLUK = "sozluk"      # sözlükten (karakter adı vb.)
 BASARISIZ = "basarisiz"  # çevrilemedi, orijinal metin kalacak (sonraki çalıştırmada tekrar denenir)
+ELLE = "elle"          # kullanıcı elle düzeltti: hiçbir otomatik işlem üzerine yazmaz
+HAFIZA = "hafiza"      # ortak çeviri hafızasından (başka bir oyunda çevrilmiş aynı metin)
+
+GECERLI_DURUMLAR = (TAMAM, HAZIR, SOZLUK, ELLE, HAFIZA)
 
 
 def guvenli_ad(metin):
@@ -89,6 +93,11 @@ class Proje(object):
         self.not_yolu = os.path.join(self.klasor, "oyun_notu.txt")
         self.rapor_yolu = os.path.join(self.klasor, "rapor.txt")
         self.gunluk_yolu = os.path.join(self.klasor, "gunluk.txt")
+        self.karakter_yolu = os.path.join(self.klasor, "karakterler.txt")
+        self.duzenleme_yolu = os.path.join(self.klasor, "ceviri_duzenle.txt")
+        self.ek_istisna_yolu = os.path.join(self.klasor, "ek_istisnalari.txt")
+        self.kor_test_yolu = os.path.join(self.klasor, "kalite_testi.html")
+        self.maliyet_yolu = os.path.join(self.klasor, "maliyet.json")
 
         self._kilit = threading.RLock()
         self.ceviriler = json_oku(self.ceviri_yolu, {}) or {}
@@ -109,29 +118,64 @@ class Proje(object):
     def ceviri_al(self, kaynak):
         with self._kilit:
             k = self.ceviriler.get(kaynak)
-            if isinstance(k, dict) and isinstance(k.get("c"), str) and k.get("d") in (TAMAM, HAZIR, SOZLUK):
+            if isinstance(k, dict) and isinstance(k.get("c"), str) and k.get("d") in GECERLI_DURUMLAR:
                 return k["c"]
             return None
+
+    def kayit_al(self, kaynak):
+        with self._kilit:
+            k = self.ceviriler.get(kaynak)
+            return dict(k) if isinstance(k, dict) else None
 
     def durum_al(self, kaynak):
         with self._kilit:
             k = self.ceviriler.get(kaynak)
             return k.get("d") if isinstance(k, dict) else None
 
-    def ceviri_kaydet(self, kaynak, ceviri, durum=TAMAM, model=None, not_=None):
+    def ceviri_kaydet(self, kaynak, ceviri, durum=TAMAM, model=None, not_=None, incelendi=False, zorla=False):
+        """Çeviriyi kaydeder. Elle düzeltilmiş bir çevirinin üzerine sadece zorla=True ile yazılır."""
         with self._kilit:
+            eski = self.ceviriler.get(kaynak)
+            if not zorla and durum != ELLE and isinstance(eski, dict) and eski.get("d") == ELLE:
+                return False
             kayit = {"c": ceviri, "d": durum}
             if model:
                 kayit["m"] = model
             if not_:
                 kayit["n"] = not_
+            if incelendi:
+                kayit["i"] = 1
+            if durum == ELLE:
+                kayit["z"] = int(time.time())
             self.ceviriler[kaynak] = kayit
             self._kirli += 1
+            return True
+
+    def incelendi_isaretle(self, kaynak):
+        with self._kilit:
+            k = self.ceviriler.get(kaynak)
+            if isinstance(k, dict) and not k.get("i"):
+                k["i"] = 1
+                self._kirli += 1
+
+    def incelendi_mi(self, kaynak):
+        with self._kilit:
+            k = self.ceviriler.get(kaynak)
+            return bool(isinstance(k, dict) and k.get("i"))
+
+    def elle_duzeltilenler(self, en_fazla=None):
+        """Kullanıcının elle düzelttiği (kaynak, çeviri) çiftleri, en yeniden eskiye."""
+        with self._kilit:
+            liste = [(v.get("z", 0), k, v["c"]) for k, v in self.ceviriler.items()
+                     if isinstance(v, dict) and v.get("d") == ELLE and isinstance(v.get("c"), str)]
+        liste.sort(reverse=True)
+        sonuc = [(k, c) for _z, k, c in liste]
+        return sonuc[:en_fazla] if en_fazla else sonuc
 
     def basarisiz_kaydet(self, kaynak, neden):
         with self._kilit:
             eski = self.ceviriler.get(kaynak)
-            if isinstance(eski, dict) and eski.get("d") in (TAMAM, HAZIR, SOZLUK):
+            if isinstance(eski, dict) and eski.get("d") in GECERLI_DURUMLAR:
                 return
             self.ceviriler[kaynak] = {"c": None, "d": BASARISIZ, "n": str(neden)[:300]}
             self._kirli += 1
@@ -167,3 +211,22 @@ class Proje(object):
     def oyun_notu_yaz(self, metin):
         with open(self.not_yolu, "w", encoding="utf-8") as f:
             f.write((metin or "").strip() + "\n")
+
+    # ------------------------------------------------------------------
+    # Ücretli servis harcaması (oyun başına, tüm oturumlar toplamı)
+
+    def maliyet_al(self):
+        veri = json_oku(self.maliyet_yolu, {}) or {}
+        try:
+            return float(veri.get("toplam_usd", 0.0)) if isinstance(veri, dict) else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def maliyet_ekle(self, tutar):
+        if not tutar:
+            return
+        toplam = self.maliyet_al() + float(tutar)
+        try:
+            json_yaz(self.maliyet_yolu, {"toplam_usd": round(toplam, 6)})
+        except OSError:
+            pass

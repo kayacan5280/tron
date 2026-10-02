@@ -21,7 +21,8 @@ VARSAYILAN = {
         "gemini-flash-lite-latest",
         "gemini-2.0-flash",
     ],
-    "dakikalik_istek": {"flash-lite": 12, "flash": 8, "pro": 4, "varsayilan": 6},
+    "dakikalik_istek": {"flash-lite": 12, "flash": 8, "pro": 4, "claude": 40, "deepseek": 60, "openai": 60,
+                        "openrouter": 30, "varsayilan": 6},
     "paket_satir": 40,
     "paket_karakter": 7000,
     "baglam_satir": 10,
@@ -38,6 +39,22 @@ VARSAYILAN = {
     "yedek_font_kalin": "",
     "oyun_baslatma_bekleme_sn": 600,
     "son_oyunlar": [],
+    "kalite_modu": "dengeli",
+    "saglayici_sirasi": ["claude", "openai", "deepseek", "openrouter", "gemini"],
+    "son_saglayici_secimi": "",
+    "claude_modeli": "claude-opus-5-5",
+    "claude_efor": "medium",
+    "claude_en_fazla_token": 32000,
+    "deepseek_modeli": "deepseek-chat",
+    "openai_modeli": "gpt-5-mini",
+    "openrouter_modeli": "deepseek/deepseek-chat",
+    "butce_usd": 0.0,
+    "fiyatlar": {},
+    "internet_bekleme_dk": 20,
+    "sonraki_baglam_satir": 3,
+    "uzun_satir_kucult": True,
+    "ortak_hafiza": True,
+    "editor_paket_satir": 25,
 }
 
 ACIKLAMA = {
@@ -59,6 +76,22 @@ ACIKLAMA = {
     "yedek_font_kalin": "Kalın yazılar için yedek font (isteğe bağlı).",
     "oyun_baslatma_bekleme_sn": "Metin çıkarma için oyunun en fazla bekleneceği süre.",
     "son_oyunlar": "Son çevrilen oyunların klasörleri (otomatik doldurulur).",
+    "kalite_modu": "hizli = tek geçiş; dengeli = çeviri kokan satırlar editörden geçer (önerilen); en_iyi = bütün diyaloglar editörden geçer (2 kat istek).",
+    "saglayici_sirasi": "Birden fazla servisin anahtarı varsa deneme sırası (ilk sıradaki önce kullanılır).",
+    "son_saglayici_secimi": "Son çeviride seçilen servisler (otomatik doldurulur).",
+    "claude_modeli": "Claude modeli (ör. claude-opus-5-5 en kaliteli, claude-sonnet-5-5 daha ucuz).",
+    "claude_efor": "Claude'un düşünme eforu: low / medium / high. Yüksek = daha kaliteli ama daha pahalı.",
+    "claude_en_fazla_token": "Claude yanıtı için en fazla token (düşünme dahil).",
+    "deepseek_modeli": "DeepSeek modeli.",
+    "openai_modeli": "OpenAI modeli.",
+    "openrouter_modeli": "OpenRouter üzerinden kullanılacak model (ör. deepseek/deepseek-chat).",
+    "butce_usd": "Ücretli servisler için oyun başına en fazla harcama (ABD doları). 0 = sınırsız (her çeviride sorulur).",
+    "fiyatlar": "Ek model fiyatları: {\"model-adi\": [girdi, çıktı, önbellek_okuma, önbellek_yazma]} (1M token başına $).",
+    "internet_bekleme_dk": "İnternet kesilirse çeviri durmadan önce bağlantının en fazla kaç dakika bekleneceği.",
+    "sonraki_baglam_satir": "Her pakete, yarım kalan cümleleri anlamak için eklenen sonraki satır sayısı.",
+    "uzun_satir_kucult": "Türkçesi çok uzayan diyalog satırlarının yazısını biraz küçült (kutudan taşmasın).",
+    "ortak_hafiza": "Oyunlar arası ortak çeviri hafızası (kısa metinler tekrar çevrilmez, API tasarrufu).",
+    "editor_paket_satir": "Editör (kalite) geçişinde bir istekteki satır sayısı.",
 }
 
 
@@ -97,6 +130,11 @@ def yukle():
                 if k not in VARSAYILAN:
                     continue
                 if _tur_uyumlu(VARSAYILAN[k], v):
+                    if isinstance(v, dict) and isinstance(VARSAYILAN[k], dict):
+                        # Yeni sürümde eklenen varsayılanlar korunur, kullanıcının değerleri üstüne yazılır.
+                        birlesik = dict(VARSAYILAN[k])
+                        birlesik.update(v)
+                        v = birlesik
                     ayar[k] = v
                 else:
                     sorunlar.append("'%s' ayarı hatalı, varsayılan kullanıldı." % k)
@@ -123,6 +161,19 @@ def yukle():
     ayar["oyun_baslatma_bekleme_sn"] = int(min(3600, max(60, ayar["oyun_baslatma_bekleme_sn"])))
     if not isinstance(ayar["dakikalik_istek"], dict):
         ayar["dakikalik_istek"] = dict(VARSAYILAN["dakikalik_istek"])
+    if ayar["kalite_modu"] not in ("hizli", "dengeli", "en_iyi"):
+        ayar["kalite_modu"] = "dengeli"
+    if ayar["claude_efor"] not in ("low", "medium", "high", "xhigh", "max"):
+        ayar["claude_efor"] = "medium"
+    for k in ("claude_modeli", "deepseek_modeli", "openai_modeli", "openrouter_modeli"):
+        ayar[k] = ayar[k].strip() or VARSAYILAN[k]
+    if not all(isinstance(x, str) for x in ayar["saglayici_sirasi"]):
+        ayar["saglayici_sirasi"] = list(VARSAYILAN["saglayici_sirasi"])
+    ayar["claude_en_fazla_token"] = int(min(128000, max(4096, ayar["claude_en_fazla_token"])))
+    ayar["butce_usd"] = float(max(0.0, ayar["butce_usd"]))
+    ayar["internet_bekleme_dk"] = int(min(600, max(1, ayar["internet_bekleme_dk"])))
+    ayar["sonraki_baglam_satir"] = int(min(10, max(0, ayar["sonraki_baglam_satir"])))
+    ayar["editor_paket_satir"] = int(min(80, max(1, ayar["editor_paket_satir"])))
 
     try:
         ayar.kaydet()
@@ -133,6 +184,7 @@ def yukle():
 
 
 def dakikalik_sinir(ayar, model):
+    """Model ya da hedef ("claude/claude-opus-5-5") için anahtar başına dakikalık istek sınırı."""
     tablo = ayar.get("dakikalik_istek") or {}
     m = model.lower()
     # En uzun eşleşen anahtar kazanır ("flash-lite", "flash"dan önce gelir).

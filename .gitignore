@@ -43,5 +43,6 @@ ayarlar.json.tmp
 ayarlar.json.bozuk
 hata_raporu.txt
 projeler/
+hafiza/
 __pycache__/
 *.pyc

@@ -7,7 +7,7 @@ init 1000 python:
     import json as _trt_json
 
     if _trt_os.environ.get("TRTEST_CIKTI"):
-        _trt = {"say": [], "menu": [], "strings": {}, "font": None, "font_kalin": None, "kayit": None, "hata": None, "replace": {}}
+        _trt = {"say": [], "say_ekran": [], "menu": [], "strings": {}, "font": None, "font_kalin": None, "kayit": None, "hata": None, "replace": {}}
         _trt_yol = _trt_os.environ["TRTEST_CIKTI"]
 
         def _trt_yaz():
@@ -56,6 +56,11 @@ init 1000 python:
 
         def _trt_say(who, what, *args, **kwargs):
             _trt["say"].append(what)
+            # Ekranda gorunecek hali (degiskenler doldurulmus)
+            try:
+                _trt["say_ekran"].append(renpy.substitute(what))
+            except Exception as _e:
+                _trt["say_ekran"].append("HATA %r" % _e)
             if len(_trt["say"]) == 5:
                 try:
                     renpy.save("1-1", "trtest")
@@ -79,6 +84,8 @@ init 1000 python:
 
 label splashscreen:
     if _trt_os.environ.get("TRTEST_CIKTI"):
+        if renpy.has_label("ek_testi"):
+            jump ek_testi
         jump start
     return
 

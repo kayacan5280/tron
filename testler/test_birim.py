@@ -145,10 +145,11 @@ class IstemTestleri(unittest.TestCase):
 
     def test_govde(self):
         ayar = dict(ayarlar.VARSAYILAN)
-        g = istem.istek_govdesi("SİSTEM", "KULLANICI", ayar, {}, "gemini-2.5-flash")
+        g = istem.istek_govdesi("SİSTEM", "KULLANICI", ayar, {}, "gemini-2.5-flash", istem.CIKTI_SEMASI)
         self.assertIn("systemInstruction", g)
         self.assertEqual(g["generationConfig"]["thinkingConfig"], {"thinkingBudget": 0})
-        self.assertIn("responseSchema", g["generationConfig"])
+        self.assertEqual(g["generationConfig"]["responseSchema"]["type"], "OBJECT")
+        self.assertNotIn("additionalProperties", json.dumps(g["generationConfig"]["responseSchema"]))
         self.assertEqual(len(g["safetySettings"]), 4)
         g = istem.istek_govdesi("S", "K", ayar, {"sistem": False, "dusunme": False, "json": False, "guvenlik": False}, "x")
         self.assertNotIn("systemInstruction", g)
